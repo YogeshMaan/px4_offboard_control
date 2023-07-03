@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleOdometry, VehicleStatus
-# import math
+import math
 
 class OffboardControl(Node):
     "Node for controlling a vehicle in offboard mode"
@@ -38,9 +38,9 @@ class OffboardControl(Node):
 
     def generate_waypoints(self):
         #generate waypoints for a rectangular trajectory
-        waypoints = [[0.0,0.0,-1.0],[1.0,0.0,-1.0],[1.0,1.0,-1.0],[0.0,1.0,-1.0],[0.0,0.0,-1.0]] #
+        wp = [[0.0,0.0,-1.0],[1.0,0.0,-1.0],[1.0,1.0,-1.0],[0.0,1.0,-1.0],[0.0,0.0,-1.0]] #
 
-        return waypoints
+        return wp
 
     def vehicle_odometry_callback(self, vehicle_odometry):
         self.vehicle_odometry = vehicle_odometry
@@ -138,9 +138,11 @@ class OffboardControl(Node):
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter +=1
 
-        self.err = math.sqrt((self.vehicle_odometry.x - self.waypoints[self.counter][0])**2 + (self.vehicle_odometry.y - self.waypoints[self.counter][1])**2 +(self.vehicle_odometry.z - self.waypoints[self.counter][2])**2)
+        if self.counter < len(self.waypoints):
+            self.err = math.sqrt((self.vehicle_odometry.x - self.waypoints[self.counter][0])**2 + (self.vehicle_odometry.y - self.waypoints[self.counter][1])**2 +(self.vehicle_odometry.z - self.waypoints[self.counter][2])**2)
+        
         self.get_logger().info(f"Error: {self.err}")
-        self.get_logger().info(f'Time(sec): {self.get_clock().now()}')
+        self.get_logger().info(f'Time(sec): {self.get_clock().now().nanoseconds / 1000}')
 
 def main(args = None) -> None:
     print('Starting offboard control node...')
