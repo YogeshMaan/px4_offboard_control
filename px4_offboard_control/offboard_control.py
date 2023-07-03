@@ -1,6 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleOdometry, VehicleStatus
+# import math
 
 class OffboardControl(Node):
     "Node for controlling a vehicle in offboard mode"
@@ -27,10 +28,19 @@ class OffboardControl(Node):
         self.offboard_setpoint_counter = 0
         self.vehicle_odometry = VehicleOdometry()
         self.vehicle_status = VehicleStatus()
-        self.takeoff_height = -5.0
+        #self.takeoff_height = -5.0
+        self.waypoints = self.generate_waypoints()
+        self.counter = 0
+        self.err = 10 #initialze as high value
 
         #create a timer to publish control commands
         self.timer = self.create_timer(0.1, self.timer_callback)
+
+    def generate_waypoints(self):
+        #generate waypoints for a rectangular trajectory
+        waypoints = [[0.0,0.0,-1.0],[1.0,0.0,-1.0],[1.0,1.0,-1.0],[0.0,1.0,-1.0],[0.0,0.0,-1.0]] #
+
+        return waypoints
 
     def vehicle_odometry_callback(self, vehicle_odometry):
         self.vehicle_odometry = vehicle_odometry
@@ -71,7 +81,7 @@ class OffboardControl(Node):
         msg.x = x
         msg.y = y
         msg.z = z
-        msg.yaw = 1.57079 # 90 degree
+        msg.yaw = 0.0 # 0 degree
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.trajectory_setpoint_publisher.publish(msg)
         self.get_logger().info(f"Publishing position setpoints {[x, y, z]}")
@@ -102,15 +112,35 @@ class OffboardControl(Node):
             self.engage_offboard_mode()
             self.arm()
 
-        if self.vehicle_odometry.z > self.takeoff_height and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-            self.publish_position_setpoint(0.0, 0.0, self.takeoff_height)
+        # ---------Hover test--------
+        # if self.vehicle_odometry.z > self.takeoff_height and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+        #     self.publish_position_setpoint(0.0, 0.0, self.takeoff_height)
 
-        elif self.vehicle_odometry.z <= self.takeoff_height:
+        # elif self.vehicle_odometry.z <= self.takeoff_height:
+        #     self.land()
+        #     exit(0)
+
+        #------------------------------------
+        #------Rectangular-------------------
+        #------------------------------------    
+
+        if self.err >.07 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2])
+
+        elif self.err <= .07 and self.counter < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2])
+            self.counter +=1
+
+        elif self.err <=.07 and self.counter >= len(self.waypoints):
             self.land()
             exit(0)
 
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter +=1
+
+        self.err = math.sqrt((self.vehicle_odometry.x - self.waypoints[self.counter][0])**2 + (self.vehicle_odometry.y - self.waypoints[self.counter][1])**2 +(self.vehicle_odometry.z - self.waypoints[self.counter][2])**2)
+        self.get_logger().info(f"Error: {self.err}")
+        self.get_logger().info(f'Time(sec): {self.get_clock().now()}')
 
 def main(args = None) -> None:
     print('Starting offboard control node...')
