@@ -31,7 +31,7 @@ class OffboardControl(Node):
         #self.takeoff_height = -5.0
         self.waypoints = self.generate_waypoints()
         self.counter = 0
-        self.err = 10 #initialze as high value
+        self.err = 10 #initialise as high value
 
         #create a timer to publish control commands
         self.timer = self.create_timer(0.1, self.timer_callback)
@@ -143,6 +143,7 @@ class OffboardControl(Node):
         
         self.get_logger().info(f"Error: {self.err}")
         self.get_logger().info(f'Time(sec): {self.get_clock().now().nanoseconds / 1000}')
+        #print("Karishma's test 2 !!")
 
 def main(args = None) -> None:
     print('Starting offboard control node...')
