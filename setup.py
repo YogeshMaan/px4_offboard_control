@@ -22,6 +22,7 @@ setup(
         'console_scripts': [
             'offboard_control = px4_offboard_control.offboard_control:main',
             'position_velocity_control = px4_offboard_control.position_velocity_controller:main',  
+            'hover_test = px4_offboard_control.offboard_control_hover:main',
         ],
     },
 )

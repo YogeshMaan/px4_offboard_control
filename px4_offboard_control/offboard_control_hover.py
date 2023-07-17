@@ -7,7 +7,7 @@ class OffboardControl(Node):
     "Node for controlling a vehicle in offboard mode"
 
     def __init__(self) -> None:
-        super().__init__('offboard_control_takeoff_and_land')
+        super().__init__('offboard_control_hover')
 
         #Create publishers
         self.offboard_control_mode_publisher = self.create_publisher(
@@ -29,18 +29,10 @@ class OffboardControl(Node):
         self.vehicle_odometry = VehicleOdometry()
         self.vehicle_status = VehicleStatus()
         self.takeoff_height = -5.0
-        self.waypoints = self.generate_waypoints()
-        self.counter = 0
-        self.err = 10 #initialise as high value
+ 
 
         #create a timer to publish control commands
         self.timer = self.create_timer(0.1, self.timer_callback)
-
-    def generate_waypoints(self):
-        #generate waypoints for a rectangular trajectory
-        wp = [[0.0,0.0,-1.0],[1.0,0.0,-1.0],[1.0,1.0,-1.0],[0.0,1.0,-1.0],[0.0,0.0,-1.0]] #
-
-        return wp
 
     def vehicle_odometry_callback(self, vehicle_odometry):
         self.vehicle_odometry = vehicle_odometry
@@ -120,30 +112,6 @@ class OffboardControl(Node):
             self.land()
             exit(0)
 
-        #------------------------------------
-        #------Rectangular-------------------
-        #------------------------------------    
-
-        # if self.err >.07 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-        #     self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2])
-
-        # elif self.err <= .07 and self.counter < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-        #     self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2])
-        #     self.counter +=1
-
-        # elif self.err <=.07 and self.counter >= len(self.waypoints):
-        #     self.land()
-        #     exit(0)
-
-        if self.offboard_setpoint_counter < 11:
-            self.offboard_setpoint_counter +=1
-
-        # if self.counter < len(self.waypoints):
-        #     self.err = math.sqrt((self.vehicle_odometry.x - self.waypoints[self.counter][0])**2 + (self.vehicle_odometry.y - self.waypoints[self.counter][1])**2 +(self.vehicle_odometry.z - self.waypoints[self.counter][2])**2)
-        
-        # self.get_logger().info(f"Error: {self.err}")
-        self.get_logger().info(f'Time(sec): {self.get_clock().now().nanoseconds / 1000}')
-        #print("Karishma's test 2 !!")
 
 def main(args = None) -> None:
     print('Starting offboard control node...')
