@@ -38,8 +38,18 @@ class PositionVelocityControl(Node):
 
     def generate_waypoints(self):
         #generate waypoints for a rectangular trajectory
-        wp = [[0.0,0.0,-1.0, float("nan"),float("nan"),float("nan")],[1.0,0.0,-1.0, 1.0, 0.0,float("nan")],[2.0, 0.0, -1.0, float("nan"),float("nan"),float("nan")]] #
-
+        self.get_logger().info("----Generating Waypoints----")
+        wp = []
+        wp.append([0.0,0.0,-1.0, float("nan"),float("nan"),float("nan")])
+        for i in range(0, 200, 1):
+            i = i/100
+            x = -.25*i**3 + (5/4)*(i**2)
+            x_dot = (-3/4)*i**2 + (5/2)*i
+            temp_arr = [x, 0.0, -1.0, x_dot, 0.0, float('nan')]
+            wp.append(temp_arr)
+            
+        wp.append([3.0, 0.0, -1.0, float("nan"),float("nan"),float("nan")])
+        self.get_logger().info("----Waypoint generation completed!----")
         return wp
 
     def vehicle_odometry_callback(self, vehicle_odometry):
