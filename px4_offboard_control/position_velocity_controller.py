@@ -21,8 +21,7 @@ class PositionVelocityControl(Node):
         self.vehicle_odometry_subscriber = self.create_subscription(
             VehicleOdometry, 'fmu/vehicle_odometry/out',self.vehicle_odometry_callback, 10)
         self.vehicle_status_subscriber = self.create_subscription(
-            VehicleStatus, '/fmu/vehicle_status/out', self.vehicle_status_callback, 10
-        )
+            VehicleStatus, '/fmu/vehicle_status/out', self.vehicle_status_callback, 10)
 
         #Initialize variables
         self.offboard_setpoint_counter = 0
@@ -40,15 +39,15 @@ class PositionVelocityControl(Node):
         #generate waypoints for a rectangular trajectory
         self.get_logger().info("----Generating Waypoints----")
         wp = []
-        wp.append([0.0,0.0,-1.0, float("nan"),float("nan"),float("nan")])
-        for i in range(0, 200, 1):
+        wp.append([0.0,0.0,-.75, float("nan"),float("nan"),float("nan")])
+        for i in range(0, 600, 10):
             i = i/100
-            x = -.25*i**3 + (5/4)*(i**2)
-            x_dot = (-3/4)*i**2 + (5/2)*i
-            temp_arr = [x, 0.0, -1.0, x_dot, 0.0, float('nan')]
+            x = .00055*i**3 + (.02)*(i**2)
+            x_dot = (.00055*3)*i**2 + (.02*2)*i
+            temp_arr = [x, 0.0, -.75, x_dot, 0.0, float('nan')]
             wp.append(temp_arr)
             
-        wp.append([3.0, 0.0, -1.0, float("nan"),float("nan"),float("nan")])
+        wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
         self.get_logger().info("----Waypoint generation completed!----")
         return wp
 
@@ -137,14 +136,14 @@ class PositionVelocityControl(Node):
         #------Rectangular-------------------
         #------------------------------------    
 
-        if self.err >.07 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+        if self.err >.1 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5] )
 
-        elif self.err <= .07 and self.counter < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+        elif self.err <= .1 and self.counter < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5])
             self.counter +=1
 
-        elif self.err <=.07 and self.counter >= len(self.waypoints):
+        elif self.err <=.1 and self.counter >= len(self.waypoints):
             self.land()
             exit(0)
 
