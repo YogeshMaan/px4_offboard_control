@@ -164,8 +164,7 @@ class PositionVelocityControl(Node):
             self.counter +=1
 
         elif self.err <= self.thres_err and self.counter >= len(self.waypoints):
-            self.publish_position_setpoint(0.0, 0.0, -.75, float("nan"),float("nan"),float("nan"))  
-                      
+            self.publish_position_setpoint(0.0, 0.0, 0.0, float("nan"),float("nan"),float("nan"))     
             exit(0)
 
         if self.counter < len(self.waypoints):
