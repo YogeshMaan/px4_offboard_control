@@ -31,7 +31,9 @@ class PositionVelocityControl(Node):
         self.waypoints = self.generate_waypoints()
         self.counter = 0
         self.err = 10 #initialise as high value
-
+        self.thres_err = .15
+        self.thres_delta_t = 30
+        self.t_initial = self.get_clock().now().nanoseconds / 10**9
         #create a timer to publish control commands
         self.timer = self.create_timer(0.1, self.timer_callback)
 
@@ -39,17 +41,22 @@ class PositionVelocityControl(Node):
         #generate waypoints for a rectangular trajectory
         self.get_logger().info("----Generating Waypoints----")
         wp = []
-        wp.append([0.0,0.0,-.75, float("nan"),float("nan"),float("nan")])
+        wp.append([0.0,0.0,-.75, 0.0 , 0.0,float("nan")])
+
+        '''
+        # Cubic spline type waypoint generator
         for i in range(0, 600, 10):
             i = i/100
             x = .00055*i**3 + (.02)*(i**2)
             x_dot = (.00055*3)*i**2 + (.02*2)*i
             temp_arr = [x, 0.0, -.75, x_dot, 0.0, float('nan')]
             wp.append(temp_arr)
-            
+        '''
+        wp.append([float("nan"), float("nan"), -.75, 0.3, 0.0 ,float("nan")])  
         wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
         self.get_logger().info("----Waypoint generation completed!----")
         return wp
+        
 
     def vehicle_odometry_callback(self, vehicle_odometry):
         self.vehicle_odometry = vehicle_odometry
@@ -73,6 +80,7 @@ class PositionVelocityControl(Node):
 
     def land(self):
         self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+
         self.get_logger().info("Switching to land mode")
 
     def publish_offboard_control_heartbeat_signal(self):
@@ -124,6 +132,11 @@ class PositionVelocityControl(Node):
             self.engage_offboard_mode()
             self.arm()
 
+        if self.offboard_setpoint_counter < 11:
+            self.offboard_setpoint_counter +=1
+
+        delta_t = self.get_clock().now().nanoseconds/10**9 - self.t_initial
+
         # ---------Hover test--------
         # if self.vehicle_odometry.z > self.takeoff_height and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
         #     self.publish_position_setpoint(0.0, 0.0, self.takeoff_height)
@@ -136,26 +149,32 @@ class PositionVelocityControl(Node):
         #------Rectangular-------------------
         #------------------------------------    
 
-        if self.err >.1 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+        if self.err > self.thres_err and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5] )
 
-        elif self.err <= .1 and self.counter < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+        elif self.err <= self.thres_err and self.counter < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5])
             self.counter +=1
 
-        elif self.err <=.1 and self.counter >= len(self.waypoints):
-            self.land()
-            exit(0)
+        elif delta_t < self.thres_delta_t and self.counter == 1 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5])
+            
+        elif delta_t >= self.thres_delta_t and self.counter == 1 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5])            
+            self.counter +=1
 
-        if self.offboard_setpoint_counter < 11:
-            self.offboard_setpoint_counter +=1
+        elif self.err <= self.thres_err and self.counter >= len(self.waypoints):
+            self.publish_position_setpoint(0.0, 0.0, -.75, float("nan"),float("nan"),float("nan"))  
+                      
+            exit(0)
 
         if self.counter < len(self.waypoints):
             self.err = math.sqrt((self.vehicle_odometry.x - self.waypoints[self.counter][0])**2 + (self.vehicle_odometry.y - self.waypoints[self.counter][1])**2 +(self.vehicle_odometry.z - self.waypoints[self.counter][2])**2)
-        
+    
+
         self.get_logger().info(f"Error: {self.err}")
-        self.get_logger().info(f'Time(sec): {self.get_clock().now().nanoseconds / 1000}')
-        #print("Karishma's test 2 !!")
+        self.get_logger().info(f'Time(sec): {delta_t}')
+        print("Testing 22")
 
 def main(args = None) -> None:
     print('Starting offboard control node...')
