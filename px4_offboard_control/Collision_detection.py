@@ -1,13 +1,14 @@
 import rclpy
 from rclpy.node import Node
-from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleOdometry, VehicleStatus
+from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleOdometry, VehicleStatus, SensorCombined
+from squeeze_custom_msgs.msg import CollisionStatus
 import math
 
-class PositionVelocityControl(Node):
-    "Node for controlling a vehicle in offboard mode using position and velocity setpoints"
+class CollisionDetection(Node):
+    "Node for controlling a vehicle in offboard mode using position-velocity setpoints and restarting the mission on collision"
 
     def __init__(self) -> None:
-        super().__init__('position_velocity_controller')
+        super().__init__('collision_detection')
 
         #Create publishers
         self.offboard_control_mode_publisher = self.create_publisher(
@@ -16,23 +17,29 @@ class PositionVelocityControl(Node):
             TrajectorySetpoint, '/fmu/trajectory_setpoint/in', 10)
         self.vehicle_command_publisher = self.create_publisher(
             VehicleCommand, '/fmu/vehicle_command/in', 10)
+        self.collision_status_publisher = self.create_publisher(
+            CollisionStatus, '/collision_status', 10)
         
         #Create subscribers
         self.vehicle_odometry_subscriber = self.create_subscription(
             VehicleOdometry, 'fmu/vehicle_odometry/out',self.vehicle_odometry_callback, 10)
         self.vehicle_status_subscriber = self.create_subscription(
             VehicleStatus, '/fmu/vehicle_status/out', self.vehicle_status_callback, 10)
+        self.sensor_combined_subscriber = self.create_subscription(
+            SensorCombined, '/fmu/sensor_combined/out', self.sensor_combined_callback, 10)
 
         #Initialize variables
         self.offboard_setpoint_counter = 0
         self.vehicle_odometry = VehicleOdometry()
         self.vehicle_status = VehicleStatus()
+        self.sensor_combined = SensorCombined()
         #self.takeoff_height = -5.0
         self.waypoints = self.generate_waypoints()
-        self.counter = 0
+        self.wp_num = 0
         self.err = 10 #initialise as high value
         self.thres_err = .15
         self.thres_delta_t = 30
+        self.collision_status = False
         self.t_initial = self.get_clock().now().nanoseconds / 10**9
         #create a timer to publish control commands
         self.timer = self.create_timer(0.1, self.timer_callback)
@@ -64,6 +71,10 @@ class PositionVelocityControl(Node):
     def vehicle_status_callback(self, vehicle_status):
         self.vehicle_status = vehicle_status
 
+    def sensor_combined_callback(self, sensor_combined):
+        self.sensor_combined = sensor_combined
+                    
+
     def arm(self):            
         """send an arm command to the vehicle"""
         self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
@@ -93,6 +104,12 @@ class PositionVelocityControl(Node):
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.offboard_control_mode_publisher.publish(msg)
 
+    def publish_collision_status(self):
+        msg = CollisionStatus()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.collision_status = self.collision_status
+        self.collision_status_publisher.publish(msg)
+
     def publish_position_setpoint(self, x: float, y: float, z:float, vx:float, vy:float, vz:float):
         msg = TrajectorySetpoint()
         msg.x = x
@@ -107,7 +124,6 @@ class PositionVelocityControl(Node):
         self.get_logger().info(f"Publishing position setpoints {[x, y, z]}")
 
     def publish_vehicle_command(self, command, **params) -> None:
-
         msg = VehicleCommand()
         msg.command = command
         msg.param1 = params.get("param1", 0.0)
@@ -127,6 +143,7 @@ class PositionVelocityControl(Node):
 
     def timer_callback(self) -> None:
         self.publish_offboard_control_heartbeat_signal()
+        self.publish_collision_status()
 
         if self.offboard_setpoint_counter == 10:
             self.engage_offboard_mode()
@@ -147,46 +164,55 @@ class PositionVelocityControl(Node):
         #     exit(0)
 
         #------------------------------------
-        #------Rectangular-------------------
-        #------------------------------------    
+        #------Position-Velocity controller-------------------
+        #------------------------------------  
+
+        # Collision detection
+        if abs(self.sensor_combined.accelerometer_m_s2[0]) > 80.0:
+            self.wp_num = 0
+            self.collision_status = True
+            self.get_logger().info("---------!!Collision Detected!!--------")
+        else:
+            self.collision_status = False
+
 
         # Thres_err based waypoint follower
         if self.err > self.thres_err and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-            self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5] )
+            self.publish_position_setpoint(self.waypoints[self.wp_num][0], self.waypoints[self.wp_num][1], self.waypoints[self.wp_num][2], self.waypoints[self.wp_num][3], self.waypoints[self.wp_num][4], self.waypoints[self.wp_num][5] )
 
-        elif self.err <= self.thres_err and self.counter < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-            self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5])
-            self.counter +=1
+        elif self.err <= self.thres_err and self.wp_num < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            self.publish_position_setpoint(self.waypoints[self.wp_num][0], self.waypoints[self.wp_num][1], self.waypoints[self.wp_num][2], self.waypoints[self.wp_num][3], self.waypoints[self.wp_num][4], self.waypoints[self.wp_num][5])
+            self.wp_num +=1
 
-        # Feedforward velocity command for a given duration
+        # Feedforward velocity command for a given duration (only for waypoint 2)
 
-        elif delta_t < self.thres_delta_t and self.counter == 1 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-            self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5])
+        elif delta_t < self.thres_delta_t and self.wp_num == 1 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            self.publish_position_setpoint(self.waypoints[self.wp_num][0], self.waypoints[self.wp_num][1], self.waypoints[self.wp_num][2], self.waypoints[self.wp_num][3], self.waypoints[self.wp_num][4], self.waypoints[self.wp_num][5])
             
-        elif delta_t >= self.thres_delta_t and self.counter == 1 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
-            self.publish_position_setpoint(self.waypoints[self.counter][0], self.waypoints[self.counter][1], self.waypoints[self.counter][2], self.waypoints[self.counter][3], self.waypoints[self.counter][4], self.waypoints[self.counter][5])            
-            self.counter +=1
+        elif delta_t >= self.thres_delta_t and self.wp_num == 1 and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            self.publish_position_setpoint(self.waypoints[self.wp_num][0], self.waypoints[self.wp_num][1], self.waypoints[self.wp_num][2], self.waypoints[self.wp_num][3], self.waypoints[self.wp_num][4], self.waypoints[self.wp_num][5])            
+            self.wp_num +=1
 
-        # Thres_err based waypoint follower
-        elif self.err <= self.thres_err and self.counter >= len(self.waypoints):
+        # Thres_err based waypoint follower: Landing setpoint after reaching the last waypoint
+        elif self.err <= self.thres_err and self.wp_num >= len(self.waypoints):
             self.publish_position_setpoint(0.0, 0.0, 0.0, float("nan"),float("nan"),float("nan"))     
             exit(0)
 
         # Compute error using des_setpoint - curr_setpoint
-        if self.counter < len(self.waypoints):
-            self.err = math.sqrt((self.vehicle_odometry.x - self.waypoints[self.counter][0])**2 + (self.vehicle_odometry.y - self.waypoints[self.counter][1])**2 +(self.vehicle_odometry.z - self.waypoints[self.counter][2])**2)
+        if self.wp_num < len(self.waypoints):
+            self.err = math.sqrt((self.vehicle_odometry.x - self.waypoints[self.wp_num][0])**2 + (self.vehicle_odometry.y - self.waypoints[self.wp_num][1])**2 +(self.vehicle_odometry.z - self.waypoints[self.wp_num][2])**2)
     
 
         self.get_logger().info(f"Error: {self.err}")
         self.get_logger().info(f'Time(sec): {delta_t}')
-        print("Testing 22")
+        
 
 def main(args = None) -> None:
     print('Starting offboard control node...')
     rclpy.init(args=args)
-    offboard_control = PositionVelocityControl()
-    rclpy.spin(offboard_control)
-    offboard_control.destroy_node()
+    collision_detection = CollisionDetection()
+    rclpy.spin(collision_detection)
+    collision_detection.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':
