@@ -33,8 +33,8 @@ class CollisionDetection(Node):
         self.vehicle_odometry = VehicleOdometry()
         self.vehicle_status = VehicleStatus()
         self.sensor_combined = SensorCombined()
-        #self.takeoff_height = -5.0
         self.waypoints = self.generate_waypoints()
+        self.Acc_x_max = 0.0
         self.wp_num = 0
         self.err = 10 #initialise as high value
         self.thres_err = .15
@@ -50,15 +50,7 @@ class CollisionDetection(Node):
         wp = []
 
         wp.append([0.0,0.0,-.75, 0.0 , 0.0,float("nan")])
-        '''
-        # Cubic spline type waypoint generator
-        for i in range(0, 600, 10):
-            i = i/100
-            x = .00055*i**3 + (.02)*(i**2)
-            x_dot = (.00055*3)*i**2 + (.02*2)*i
-            temp_arr = [x, 0.0, -.75, x_dot, 0.0, float('nan')]
-            wp.append(temp_arr)
-        '''
+    
         wp.append([float("nan"), float("nan"), -.75, 0.3, 0.0 ,float("nan")])  
         wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
         self.get_logger().info("----Waypoint generation completed!----")
@@ -72,6 +64,8 @@ class CollisionDetection(Node):
         self.vehicle_status = vehicle_status
 
     def sensor_combined_callback(self, sensor_combined):
+        if abs(sensor_combined.accelerometer_m_s2[0])>self.Acc_x_max:
+            self.Acc_x_max = sensor_combined.accelerometer_m_s2[0]
         self.sensor_combined = sensor_combined
                     
 
@@ -143,7 +137,7 @@ class CollisionDetection(Node):
 
     def timer_callback(self) -> None:
         self.publish_offboard_control_heartbeat_signal()
-        self.publish_collision_status()
+        self.publish_collision_status()                          #publish collision status
 
         if self.offboard_setpoint_counter == 10:
             self.engage_offboard_mode()
@@ -168,7 +162,7 @@ class CollisionDetection(Node):
         #------------------------------------  
 
         # Collision detection
-        if abs(self.sensor_combined.accelerometer_m_s2[0]) > 80.0:
+        if self.Acc_x_max > 40.0:
             self.wp_num = 0
             self.collision_status = True
             self.get_logger().info("---------!!Collision Detected!!--------")
