@@ -36,6 +36,8 @@ class CollisionDetection(Node):
         self.waypoints = self.generate_waypoints()
         self.Acc_x_max = 0.0
         self.wp_num = 0
+        self.collision_count = 0
+        self.max_collision = 5
         self.err = 10 #initialise as high value
         self.thres_err = .15
         self.thres_delta_t = 30
@@ -49,9 +51,9 @@ class CollisionDetection(Node):
         self.get_logger().info("----Generating Waypoints----")
         wp = []
 
-        wp.append([0.0,0.0,-.75, 0.0 , 0.0,float("nan")])
+        wp.append([-0.5,0.0,-.75, 0.0 , 0.0,float("nan")])
     
-        wp.append([float("nan"), float("nan"), -.75, 0.3, 0.0 ,float("nan")])  
+        wp.append([float("nan"), float("nan"), -.75, 1.5, 0.0 ,float("nan")])  
         wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
         self.get_logger().info("----Waypoint generation completed!----")
         return wp
@@ -65,7 +67,7 @@ class CollisionDetection(Node):
 
     def sensor_combined_callback(self, sensor_combined):
         if abs(sensor_combined.accelerometer_m_s2[0])>self.Acc_x_max:
-            self.Acc_x_max = sensor_combined.accelerometer_m_s2[0]
+            self.Acc_x_max = abs(sensor_combined.accelerometer_m_s2[0])
         self.sensor_combined = sensor_combined
                     
 
@@ -162,12 +164,22 @@ class CollisionDetection(Node):
         #------------------------------------  
 
         # Collision detection
-        if self.Acc_x_max > 40.0:
+        if self.Acc_x_max > 40.0 and self.collision_count < self.max_collision: # Restarts only when collision count < max_collision
+            self.Acc_x_max = 0.0
             self.wp_num = 0
+            self.err = 10 #initialise as high value
             self.collision_status = True
+            self.collision_count += 1 
+            self.t_initial = self.get_clock().now().nanoseconds/10**9
             self.get_logger().info("---------!!Collision Detected!!--------")
         else:
             self.collision_status = False
+
+        # if collision count = max collision, go to final wp and land 
+        if self.collision_count == self.max_collision:
+            self.wp_num = len(self.waypoints)- 1
+            self.err = 10
+            self.collision_count += 1
 
 
         # Thres_err based waypoint follower
@@ -199,6 +211,7 @@ class CollisionDetection(Node):
 
         self.get_logger().info(f"Error: {self.err}")
         self.get_logger().info(f'Time(sec): {delta_t}')
+        self.get_logger().info(f'Max Acceleration X: {self.Acc_x_max}')
         
 
 def main(args = None) -> None:
