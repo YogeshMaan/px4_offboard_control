@@ -52,7 +52,9 @@ class CollisionDetection(Node):
         wp = []
 
         wp.append([-0.5,0.0,-.75, 0.0 , 0.0,float("nan")])
+        wp.append([-0.5,0.0,-.75, 0.0 , 0.0,float("nan")])
     
+        wp.append([float("nan"), float("nan"), -.75, 1.5, 0.0 ,float("nan")])  
         wp.append([float("nan"), float("nan"), -.75, 1.5, 0.0 ,float("nan")])  
         wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
         self.get_logger().info("----Waypoint generation completed!----")
@@ -67,6 +69,7 @@ class CollisionDetection(Node):
 
     def sensor_combined_callback(self, sensor_combined):
         if abs(sensor_combined.accelerometer_m_s2[0])>self.Acc_x_max:
+            self.Acc_x_max = abs(sensor_combined.accelerometer_m_s2[0])
             self.Acc_x_max = abs(sensor_combined.accelerometer_m_s2[0])
         self.sensor_combined = sensor_combined
                     
