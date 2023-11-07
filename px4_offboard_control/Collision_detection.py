@@ -37,7 +37,7 @@ class CollisionDetection(Node):
         self.Acc_x_max = 0.0
         self.wp_num = 0
         self.collision_count = 0
-        self.max_collision = 5
+        self.max_collision = 1
         self.err = 10 #initialise as high value
         self.thres_err = .15
         self.thres_delta_t = 30
@@ -52,9 +52,6 @@ class CollisionDetection(Node):
         wp = []
 
         wp.append([-0.5,0.0,-.75, 0.0 , 0.0,float("nan")])
-        wp.append([-0.5,0.0,-.75, 0.0 , 0.0,float("nan")])
-    
-        wp.append([float("nan"), float("nan"), -.75, 1.5, 0.0 ,float("nan")])  
         wp.append([float("nan"), float("nan"), -.75, 1.5, 0.0 ,float("nan")])  
         wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
         self.get_logger().info("----Waypoint generation completed!----")
@@ -187,6 +184,7 @@ class CollisionDetection(Node):
 
         # Thres_err based waypoint follower
         if self.err > self.thres_err and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            # add a waypoint function to publish it
             self.publish_position_setpoint(self.waypoints[self.wp_num][0], self.waypoints[self.wp_num][1], self.waypoints[self.wp_num][2], self.waypoints[self.wp_num][3], self.waypoints[self.wp_num][4], self.waypoints[self.wp_num][5] )
 
         elif self.err <= self.thres_err and self.wp_num < len(self.waypoints) and self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:

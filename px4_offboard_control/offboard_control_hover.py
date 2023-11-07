@@ -28,7 +28,7 @@ class OffboardControl(Node):
         self.offboard_setpoint_counter = 0
         self.vehicle_odometry = VehicleOdometry()
         self.vehicle_status = VehicleStatus()
-        self.takeoff_height = -5.0
+        self.takeoff_height = -.06
  
 
         #create a timer to publish control commands
