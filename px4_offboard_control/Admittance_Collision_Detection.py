@@ -1,0 +1,291 @@
+import rclpy
+from rclpy.node import Node
+from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleOdometry, VehicleStatus, SensorCombined
+from squeeze_custom_msgs.msg import CollisionStatus, AdmittanceTrajectoryReference
+import math
+
+#----To-do-------#
+# Figure out a way to import AdmittanceController() module in this node
+#-----------------------------------------
+
+class AdmittanceCollisionDetection(Node):
+    "Node for controlling a vehicle in offboard mode using position-velocity setpoints and restarting the mission on collision"
+
+    def __init__(self) -> None:
+        super().__init__('admittance_collision_detection')
+
+        #Create publishers
+        self.offboard_control_mode_publisher = self.create_publisher(
+            OffboardControlMode, '/fmu/offboard_control_mode/in', 10)
+        self.trajectory_setpoint_publisher = self.create_publisher(
+            TrajectorySetpoint, '/fmu/trajectory_setpoint/in', 10)
+        self.vehicle_command_publisher = self.create_publisher(
+            VehicleCommand, '/fmu/vehicle_command/in', 10)
+        self.collision_status_publisher = self.create_publisher(
+            CollisionStatus, '/collision_status', 10)
+        #----To-do-----#
+        # add admittance_trajectory publisher
+        
+
+        #------------------------
+        
+        #Create subscribers
+        self.vehicle_odometry_subscriber = self.create_subscription(
+            VehicleOdometry, 'fmu/vehicle_odometry/out',self.vehicle_odometry_callback, 10)
+        self.vehicle_status_subscriber = self.create_subscription(
+            VehicleStatus, '/fmu/vehicle_status/out', self.vehicle_status_callback, 10)
+        self.sensor_combined_subscriber = self.create_subscription(
+            SensorCombined, '/fmu/sensor_combined/out', self.sensor_combined_callback, 10)
+        
+        #create a timer_callback to publish control commands
+        self.timer = self.create_timer(0.1, self.timer_callback)
+
+        #----To-do-----#
+        # Initialise admittance controller instances for x&y direction
+        
+
+        #------------------------
+
+        #Initialize variables
+        self.offboard_setpoint_counter = 0
+        self.vehicle_odometry = VehicleOdometry()
+        self.vehicle_status = VehicleStatus()
+        self.sensor_combined = SensorCombined()
+
+        # additional variables
+        self.collision_status = False
+        self.t_initial = self.get_clock().now().nanoseconds / 10**9
+        self.delta_t = 0
+        self.thres_delta_t = 30
+        self.waypoints = self.generateWaypoints()
+        self.Acc_x = 0 
+        self.wp_num = 0
+        self.thres_error = .15
+        
+
+    def generateWaypoints(self):
+        self.get_logger().info("----Generating Waypoints----")
+        wp = []
+        # Wp 1
+        wp.append([-0.5,0.0,-.75, 0.0 , 0.0,float("nan")])
+        # Wp 2
+        wp.append([-0.5,-0.75,-.75, 0.0 , 0.0,float("nan")])
+        # Wp 3
+        wp.append([float("nan"), float("nan"), -.75, .5, .5,float("nan")])  # Velocities depend on angle of collision and ADD Yaw
+        # Wp 4 (modified after collision)
+        wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
+        # Wp 5 (after mission over)
+        wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
+        # Wp 6 (landing wp)
+        wp.append([0.0, 0.0, 0.0, float("nan"),float("nan"),float("nan")])
+
+        self.get_logger().info("----Waypoint generation completed!----")
+        return wp
+        
+
+    def vehicle_odometry_callback(self, vehicle_odometry):
+        self.vehicle_odometry = vehicle_odometry
+
+    def vehicle_status_callback(self, vehicle_status):
+        self.vehicle_status = vehicle_status
+
+    def sensor_combined_callback(self, sensor_combined):
+        self.sensor_combined = sensor_combined 
+       # call checkCollision()
+            
+        
+                    
+
+    def arm(self):            
+        """send an arm command to the vehicle"""
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
+        self.get_logger().info('Arm command sent')
+
+    def disarm(self):
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=0.0)
+        self.get_logger().info('Disarm command sent')
+
+    def engage_offboard_mode(self):
+        self.publish_vehicle_command(
+            VehicleCommand.VEHICLE_CMD_DO_SET_MODE, param1 = 1.0, param2=6.0)
+        self.get_logger().info('Switching to offboard mode')
+
+    def land(self):
+        self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_NAV_LAND)
+
+        self.get_logger().info("Switching to land mode")
+
+    def publish_offboard_control_heartbeat_signal(self):
+        msg = OffboardControlMode()
+        msg.position = True
+        msg.velocity = False
+        msg.acceleration = False
+        msg.attitude = False
+        msg.body_rate = False
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.offboard_control_mode_publisher.publish(msg)
+
+    def publish_collision_status(self):
+        msg = CollisionStatus()
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        msg.collision_status = self.collision_status
+        self.collision_status_publisher.publish(msg)
+
+
+    def publish_vehicle_command(self, command, **params) -> None:
+        msg = VehicleCommand()
+        msg.command = command
+        msg.param1 = params.get("param1", 0.0)
+        msg.param2 = params.get("param2", 0.0)
+        msg.param3 = params.get("param3", 0.0)
+        msg.param4 = params.get("param4", 0.0)
+        msg.param5 = params.get("param5", 0.0)
+        msg.param6 = params.get("param6", 0.0)
+        msg.param7 = params.get("param7", 0.0)
+        msg.target_system = 1
+        msg.target_component = 1
+        msg.source_system = 1
+        msg.source_component = 1
+        msg.from_external = True
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.vehicle_command_publisher.publish(msg)
+
+    def wp_publisher(self, wp_num):
+        # add different cases to publish waypoints
+        msg = TrajectorySetpoint()
+        msg.x = self.waypoints[self.wp_num][0]
+        msg.y = self.waypoints[self.wp_num][1]
+        msg.z = self.waypoints[self.wp_num][2]
+        msg.vx = self.waypoints[self.wp_num][3]
+        msg.vy =  self.waypoints[self.wp_num][4]
+        msg.vz =  self.waypoints[self.wp_num][5]
+        msg.yaw = 0.0 # 0 degree
+        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
+        self.trajectory_setpoint_publisher.publish(msg)
+        self.get_logger().info(f"Publishing position setpoints {[x, y, z]}")
+
+    
+    def check(self):
+
+        # if collision count = max collision, go to wp 5 
+        if self.collision_count == self.max_collision:
+            self.wp_num = 4
+            self.err = 10
+        
+
+        if self.wp_num == 0:
+            if self.euclideanError(self.wp_num) >= self.thres_error:
+                self.wp_publisher(self.wp_num)
+            else:        
+                self.wp_num += 1
+                self.wp_publisher(self.wp_num) 
+        
+        if self.wp_num == 1:
+            if self.euclideanError(self.wp_num) >= self.thres_error:
+                self.wp_publisher(self.wp_num)
+            else:     
+                self.wp_num += 1
+                self.wp_publisher(self.wp_num) 
+        
+        if self.wp_num == 2:
+            collisionDetected = self.checkCollision()
+
+            if not collisionDetected and self.delta_t <= self.thres_delta_t:
+                self.wp_publisher(self.wp_num)
+            elif not collisionDetected and self.delta_t > self.thres_delta_t:
+                # go to wp 5
+                self.wp_num = 4
+                self.wp_publisher(self.wp_num)
+            elif collisionDetected and self.delta_t <= self.thres_delta_t: 
+                #self.wp_publisher(self.wp_num) # publishes feedforward velocity. Shall I try not to publish this? 
+                
+                
+                #-----TO-DO-----#
+                # Modify wp4 using AdmittanceController, Acc_x & Acc_y using some function
+                x_new = 0
+                y_new = 0
+                self.waypoints[3] = [x_new, y_new, -.75, float("nan"),float("nan"),float("nan") ] # Do it using modifyWaypoint4()
+                # set collision_status to false
+                self.wp_num += 1
+                self.wp_publisher(self.wp_num)  #publishes wp 3
+
+        if self.wp_num == 3:
+            if self.euclideanError(self.wp_num) >= self.thres_error:
+                self.wp_publisher(self.wp_num)
+            else:        
+                self.wp_num += 1
+                self.wp_publisher(self.wp_num)
+        
+        if self.wp_num == 4:
+            if self.euclideanError(self.wp_num) >= self.thres_error:
+                self.wp_publisher(self.wp_num)
+            else:        
+                self.wp_num += 1
+                self.wp_publisher(self.wp_num)
+
+        if self.wp_num == 5: # land
+            if self.euclideanError(self.wp_num) >= self.thres_error:
+                self.wp_publisher(self.wp_num)
+            else:        
+                self.wp_publisher(self.wp_num)
+                
+        return None
+    
+    def checkCollision(self):
+        if abs(self.sensor_combined.accelerometer_m_s2[0])>self.Acc_x: # and collision_status = False
+            self.Acc_x = abs(self.sensor_combined.accelerometer_m_s2[0])
+        if self.Acc_x > 40.0 and self.collision_count < self.max_collision: # Restarts only when collision count < max_collision
+            self.collision_status = True
+            self.collision_count += 1 
+            self.get_logger().info("---------!!Collision Detected!!--------")
+        else:
+            self.collision_status = False # Reset it after modifying the wp4
+
+        return self.collision_status
+
+
+    def euclideanError(self, wp):
+        err = math.sqrt((self.vehicle_odometry.x - self.waypoints[wp][0])**2 + 
+                             (self.vehicle_odometry.y - self.waypoints[wp][1])**2 +
+                             (self.vehicle_odometry.z - self.waypoints[wp][2])**2)
+        return err
+    
+    
+    
+    def timer_callback(self) -> None:
+        self.publish_offboard_control_heartbeat_signal()
+
+        if self.offboard_setpoint_counter == 10:
+            self.engage_offboard_mode()
+            self.arm()
+
+        if self.offboard_setpoint_counter < 11:
+            self.offboard_setpoint_counter +=1
+
+        self.publish_collision_status()  
+        self.delta_t = self.get_clock().now().nanoseconds/10**9 - self.t_initial
+
+        if self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
+            self.check()
+        else:
+            self.land()
+
+
+def main(args = None) -> None:
+    print('Starting offboard control node...')
+    rclpy.init(args=args)
+    admittance_collision_detection = AdmittanceCollisionDetection()
+    rclpy.spin(admittance_collision_detection)
+    admittance_collision_detection.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as e:
+        print(e)
+
+
+
+
+
