@@ -11,7 +11,7 @@ import math
 class AdmittanceCollisionDetection(Node):
     "Node for controlling a vehicle in offboard mode using position-velocity setpoints and restarting the mission on collision"
 
-    def __init__(self) -> None:
+    def __init__(self) -> None: 
         super().__init__('admittance_collision_detection')
 
         #Create publishers
@@ -25,7 +25,8 @@ class AdmittanceCollisionDetection(Node):
             CollisionStatus, '/collision_status', 10)
         #----To-do-----#
         # add admittance_trajectory publisher
-        
+        self.admittance_traj_publisher = self.create_publisher(
+            AdmittanceTrajectoryReference, 'admittance_trajectory', 10)
 
         #------------------------
         
@@ -42,7 +43,7 @@ class AdmittanceCollisionDetection(Node):
 
         #----To-do-----#
         # Initialise admittance controller instances for x&y direction
-        
+        # or set a wp proportional to the peak acc_x & acc_y
 
         #------------------------
 
@@ -59,6 +60,7 @@ class AdmittanceCollisionDetection(Node):
         self.thres_delta_t = 30
         self.waypoints = self.generateWaypoints()
         self.Acc_x = 0 
+        self.Acc_y = 0
         self.wp_num = 0
         self.thres_error = .15
         
@@ -67,17 +69,17 @@ class AdmittanceCollisionDetection(Node):
         self.get_logger().info("----Generating Waypoints----")
         wp = []
         # Wp 1
-        wp.append([-0.5,0.0,-.75, 0.0 , 0.0,float("nan")])
+        wp.append([-0.5,0.0,-.75, 0.0 , 0.0,float("nan"), 0.0])
         # Wp 2
-        wp.append([-0.5,-0.75,-.75, 0.0 , 0.0,float("nan")])
+        wp.append([-0.5,-0.75,-.75, 0.0 , 0.0,float("nan"), 0.0])
         # Wp 3
-        wp.append([float("nan"), float("nan"), -.75, .5, .5,float("nan")])  # Velocities depend on angle of collision and ADD Yaw
+        wp.append([float("nan"), float("nan"), -.75, .5, .5,float("nan"), 45.0])  # Velocities depend on angle of collision and ADD Yaw
         # Wp 4 (modified after collision)
-        wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
+        wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan"), 0.0])
         # Wp 5 (after mission over)
-        wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan")])
+        wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan"), 0.0])
         # Wp 6 (landing wp)
-        wp.append([0.0, 0.0, 0.0, float("nan"),float("nan"),float("nan")])
+        wp.append([0.0, 0.0, 0.0, float("nan"),float("nan"),float("nan"), 0.0])
 
         self.get_logger().info("----Waypoint generation completed!----")
         return wp
@@ -91,11 +93,9 @@ class AdmittanceCollisionDetection(Node):
 
     def sensor_combined_callback(self, sensor_combined):
         self.sensor_combined = sensor_combined 
-       # call checkCollision()
+        self.checkCollision()
             
         
-                    
-
     def arm(self):            
         """send an arm command to the vehicle"""
         self.publish_vehicle_command(VehicleCommand.VEHICLE_CMD_COMPONENT_ARM_DISARM, param1=1.0)
@@ -162,7 +162,7 @@ class AdmittanceCollisionDetection(Node):
         msg.yaw = 0.0 # 0 degree
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.trajectory_setpoint_publisher.publish(msg)
-        self.get_logger().info(f"Publishing position setpoints {[x, y, z]}")
+        self.get_logger().info(f"Publishing position setpoints {[msg.x, msg.y, msg.z]}")
 
     
     def check(self):
@@ -188,7 +188,7 @@ class AdmittanceCollisionDetection(Node):
                 self.wp_publisher(self.wp_num) 
         
         if self.wp_num == 2:
-            collisionDetected = self.checkCollision()
+            collisionDetected = self.collision_status
 
             if not collisionDetected and self.delta_t <= self.thres_delta_t:
                 self.wp_publisher(self.wp_num)
@@ -196,18 +196,15 @@ class AdmittanceCollisionDetection(Node):
                 # go to wp 5
                 self.wp_num = 4
                 self.wp_publisher(self.wp_num)
-            elif collisionDetected and self.delta_t <= self.thres_delta_t: 
-                #self.wp_publisher(self.wp_num) # publishes feedforward velocity. Shall I try not to publish this? 
-                
-                
+            elif collisionDetected and self.delta_t <= self.thres_delta_t:             
                 #-----TO-DO-----#
-                # Modify wp4 using AdmittanceController, Acc_x & Acc_y using some function
-                x_new = 0
-                y_new = 0
-                self.waypoints[3] = [x_new, y_new, -.75, float("nan"),float("nan"),float("nan") ] # Do it using modifyWaypoint4()
-                # set collision_status to false
+                # Modify wp4 using AdmittanceController, Acc_x & Acc_y using some proportional function
+                x_new = -.01*self.Acc_x
+                y_new = .01*self.Acc_y
+                self.modifyWaypoint4(x_new, y_new) 
+                self.collision_status = False
                 self.wp_num += 1
-                self.wp_publisher(self.wp_num)  #publishes wp 3
+                self.wp_publisher(self.wp_num)  
 
         if self.wp_num == 3:
             if self.euclideanError(self.wp_num) >= self.thres_error:
@@ -216,7 +213,7 @@ class AdmittanceCollisionDetection(Node):
                 self.wp_num += 1
                 self.wp_publisher(self.wp_num)
         
-        if self.wp_num == 4:
+        if self.wp_num == 4: #hover over landing wp
             if self.euclideanError(self.wp_num) >= self.thres_error:
                 self.wp_publisher(self.wp_num)
             else:        
@@ -227,19 +224,25 @@ class AdmittanceCollisionDetection(Node):
             if self.euclideanError(self.wp_num) >= self.thres_error:
                 self.wp_publisher(self.wp_num)
             else:        
-                self.wp_publisher(self.wp_num)
+                self.land()
                 
         return None
     
+    def modifyWaypoint4(self, x_new, y_new):
+        self.waypoints[3] = [x_new, y_new, -.75, float("nan"),float("nan"),float("nan") ] # Do it using modifyWaypoint4()
+    
     def checkCollision(self):
-        if abs(self.sensor_combined.accelerometer_m_s2[0])>self.Acc_x: # and collision_status = False
+        if abs(self.sensor_combined.accelerometer_m_s2[0])>self.Acc_x and self.collision_status==False: # Add collision_status = False
+            #----TO-DO-----#
+            # Separate the -ive and +ive impacts
             self.Acc_x = abs(self.sensor_combined.accelerometer_m_s2[0])
+            self.Acc_y = self.sensor_combined.accelerometer_m_s2[1]
         if self.Acc_x > 40.0 and self.collision_count < self.max_collision: # Restarts only when collision count < max_collision
             self.collision_status = True
             self.collision_count += 1 
             self.get_logger().info("---------!!Collision Detected!!--------")
-        else:
-            self.collision_status = False # Reset it after modifying the wp4
+        # else:
+        #     self.collision_status = False # Reset it after modifying the wp4
 
         return self.collision_status
 
