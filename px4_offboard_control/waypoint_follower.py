@@ -1,18 +1,14 @@
 import rclpy
 from rclpy.node import Node
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleOdometry, VehicleStatus, SensorCombined
-from squeeze_custom_msgs.msg import CollisionStatus, AdmittanceTrajectoryReference
 import math
 
-#----To-do-------#
-# Figure out a way to import AdmittanceController() module in this node
-#-----------------------------------------
 
-class AdmittanceCollisionDetection(Node):
-    "Node for controlling a vehicle in offboard mode using position-velocity setpoints and restarting the mission on collision"
+class WaypointFollower(Node):
+    "Node for controlling a vehicle in offboard mode using waypoints"
 
     def __init__(self) -> None: 
-        super().__init__('admittance_collision_detection')
+        super().__init__('waypoint_follower')
 
         #Create publishers
         self.offboard_control_mode_publisher = self.create_publisher(
@@ -21,15 +17,8 @@ class AdmittanceCollisionDetection(Node):
             TrajectorySetpoint, '/fmu/trajectory_setpoint/in', 10)
         self.vehicle_command_publisher = self.create_publisher(
             VehicleCommand, '/fmu/vehicle_command/in', 10)
-        self.collision_status_publisher = self.create_publisher(
-            CollisionStatus, '/collision_status', 10)
-        #----To-do-----#
-        # add admittance_trajectory publisher
-        self.admittance_traj_publisher = self.create_publisher(
-            AdmittanceTrajectoryReference, 'admittance_trajectory', 10)
-
-        #------------------------
-        
+           
+                
         #Create subscribers
         self.vehicle_odometry_subscriber = self.create_subscription(
             VehicleOdometry, 'fmu/vehicle_odometry/out',self.vehicle_odometry_callback, 10)
@@ -39,13 +28,9 @@ class AdmittanceCollisionDetection(Node):
             SensorCombined, '/fmu/sensor_combined/out', self.sensor_combined_callback, 10)
         
         #create a timer_callback to publish control commands
-        self.timer = self.create_timer(0.005, self.timer_callback)
+        self.timer = self.create_timer(0.1, self.timer_callback)
 
-        #----To-do-----#
-        # Initialise admittance controller instances for x&y direction
-        # or set a wp proportional to the peak acc_x & acc_y
-
-        #------------------------
+        
 
         #Initialize variables
         self.offboard_setpoint_counter = 0
@@ -54,16 +39,10 @@ class AdmittanceCollisionDetection(Node):
         self.sensor_combined = SensorCombined()
 
         # additional variables
-        self.collision_status = False
-        self.t_initial = self.get_clock().now().nanoseconds / 10**9
-        self.delta_t = 0
-        self.thres_delta_t = 30
+    
         self.waypoints = self.generateWaypoints()
-        self.Acc_x = 0 
-        self.Acc_y = 0
         self.wp_num = 0
         self.thres_error = .15
-        self.max_collision = 1
         self.collision_count = 0
         
 
@@ -75,9 +54,9 @@ class AdmittanceCollisionDetection(Node):
         # Wp 2
         wp.append([-0.5, 0.0 ,-.75, 0.0 , 0.0,float("nan"), 0.0])
         # Wp 3
-        wp.append([float("nan"), float("nan"), -.75, 1.0, 0.0 ,float("nan"), 0.0])  # Velocities depend on angle of collision and ADD Yaw
+        wp.append([float("nan"), float("nan"), -.75, 1.0, 0.0 ,float("nan"), 0.0])   # Velocities depend on angle of collision and ADD Yaw
         # Wp 4 (modified after collision)
-        wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan"), 0.0])
+        wp.append([.773, 0.0, -.75, float("nan"),float("nan"),float("nan"), 0.0])
         # Wp 5 (after mission over)
         wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan"), 0.0])
         # Wp 6 (landing wp)
@@ -95,7 +74,7 @@ class AdmittanceCollisionDetection(Node):
 
     def sensor_combined_callback(self, sensor_combined):
         self.sensor_combined = sensor_combined 
-        self.checkCollision()
+        
             
         
     def arm(self):            
@@ -126,12 +105,6 @@ class AdmittanceCollisionDetection(Node):
         msg.body_rate = False
         msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
         self.offboard_control_mode_publisher.publish(msg)
-
-    def publish_collision_status(self):
-        msg = CollisionStatus()
-        msg.timestamp = int(self.get_clock().now().nanoseconds / 1000)
-        msg.collision_status = self.collision_status
-        self.collision_status_publisher.publish(msg)
 
 
     def publish_vehicle_command(self, command, **params) -> None:
@@ -182,25 +155,16 @@ class AdmittanceCollisionDetection(Node):
             else:     
                 self.wp_num += 1
                 self.wp_publisher(self.wp_num) 
-        
-        if self.wp_num == 2:
-            collisionDetected = self.collision_status
 
-            if not collisionDetected and self.delta_t <= self.thres_delta_t:
+        if self.wp_num == 2:
+            err2 = math.sqrt((self.vehicle_odometry.x - 1.38)**2 + 
+                             (self.vehicle_odometry.y - 0)**2 +
+                             (self.vehicle_odometry.z - (-.75))**2)
+            if err2 >= self.thres_error:
                 self.wp_publisher(self.wp_num)
-            elif not collisionDetected and self.delta_t > self.thres_delta_t:
-                # go to wp 5
-                self.wp_num = 4
-                self.wp_publisher(self.wp_num)
-            elif collisionDetected and self.delta_t <= self.thres_delta_t:             
-                #-----TO-DO-----#
-                # Modify wp4 using AdmittanceController, Acc_x & Acc_y using some proportional function
-                
-                self.modifyWaypoint4() 
-                self.collision_status = False
-                self.Acc_x = 0
+            else:     
                 self.wp_num += 1
-                self.wp_publisher(self.wp_num)  
+                self.wp_publisher(self.wp_num) 
 
         if self.wp_num == 3:
             if self.euclideanError(self.wp_num) >= self.thres_error:
@@ -221,41 +185,15 @@ class AdmittanceCollisionDetection(Node):
                 self.wp_publisher(self.wp_num)
             else:        
                 self.land()
-
-        # if collision count = max collision, go to wp 5 
-        # if self.collision_count == self.max_collision:
-        #     self.wp_num = 4
-        #     self.err = 10
                 
         return None
-    
-    def modifyWaypoint4(self):
-        x_new = self.vehicle_odometry.x - .01*self.Acc_x 
-        y_new = self.vehicle_odometry.y + .01*self.Acc_y
-        self.waypoints[3] = [x_new, y_new, -.75, float("nan"),float("nan"),float("nan") ] # Do it using modifyWaypoint4()
-    
-    def checkCollision(self):
-        if abs(self.sensor_combined.accelerometer_m_s2[0])>self.Acc_x and self.collision_status==False: # Add collision_status = False
-            #----TO-DO-----#
-            # Separate the -ive and +ive impacts
-            self.Acc_x = abs(self.sensor_combined.accelerometer_m_s2[0])
-            self.Acc_y = self.sensor_combined.accelerometer_m_s2[1]
-        if self.Acc_x > 40.0: # Restarts only when collision count < max_collision
-            self.collision_status = True
-            self.collision_count += 1 
-            self.get_logger().info("---------!!Collision Detected!!--------")
-        # else:
-        #     self.collision_status = False # Reset it after modifying the wp4
-
-        return self.collision_status
 
 
-    def euclideanError(self, wp):
-        err = math.sqrt((self.vehicle_odometry.x - self.waypoints[wp][0])**2 + 
-                             (self.vehicle_odometry.y - self.waypoints[wp][1])**2 +
-                             (self.vehicle_odometry.z - self.waypoints[wp][2])**2)
+    def euclideanError(self, wp_i):
+        err = math.sqrt((self.vehicle_odometry.x - self.waypoints[wp_i][0])**2 + 
+                             (self.vehicle_odometry.y - self.waypoints[wp_i][1])**2 +
+                             (self.vehicle_odometry.z - self.waypoints[wp_i][2])**2)
         return err
-    
     
     
     def timer_callback(self) -> None:
@@ -268,21 +206,17 @@ class AdmittanceCollisionDetection(Node):
         if self.offboard_setpoint_counter < 11:
             self.offboard_setpoint_counter +=1
 
-        self.publish_collision_status()  
-        self.delta_t = self.get_clock().now().nanoseconds/10**9 - self.t_initial
-
         if self.vehicle_status.nav_state == VehicleStatus.NAVIGATION_STATE_OFFBOARD:
             self.check()
-        # else:
-        #     self.land()
+
 
 
 def main(args = None) -> None:
     print('Starting offboard control node...')
     rclpy.init(args=args)
-    admittance_collision_detection = AdmittanceCollisionDetection()
-    rclpy.spin(admittance_collision_detection)
-    admittance_collision_detection.destroy_node()
+    waypoint_follower = WaypointFollower()
+    rclpy.spin(waypoint_follower)
+    waypoint_follower.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':
