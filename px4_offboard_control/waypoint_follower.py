@@ -56,11 +56,13 @@ class WaypointFollower(Node):
         # Wp 3
         wp.append([float("nan"), float("nan"), -.75, 1.0, 0.0 ,float("nan"), 0.0])   # Velocities depend on angle of collision and ADD Yaw
         # Wp 4 (modified after collision)
-        wp.append([.773, 0.0, -.75, float("nan"),float("nan"),float("nan"), 0.0])
+        wp.append([.911, 0.0, -.75, float("nan"),float("nan"),float("nan"), 0.0])
         # Wp 5 (after mission over)
         wp.append([0.0, 0.0, -.75, float("nan"),float("nan"),float("nan"), 0.0])
         # Wp 6 (landing wp)
         wp.append([0.0, 0.0, 0.0, float("nan"),float("nan"),float("nan"), 0.0])
+
+        print(wp)
 
         self.get_logger().info("----Waypoint generation completed!----")
         return wp
@@ -157,9 +159,9 @@ class WaypointFollower(Node):
                 self.wp_publisher(self.wp_num) 
 
         if self.wp_num == 2:
-            err2 = math.sqrt((self.vehicle_odometry.x - 1.38)**2 + 
-                             (self.vehicle_odometry.y - 0)**2 +
-                             (self.vehicle_odometry.z - (-.75))**2)
+            err2 = math.sqrt((self.vehicle_odometry.x - 1.25)**2 + 
+                             (0)**2 + # made it zero
+                             (0)**2)
             if err2 >= self.thres_error:
                 self.wp_publisher(self.wp_num)
             else:     

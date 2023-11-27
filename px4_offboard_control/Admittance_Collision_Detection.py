@@ -3,10 +3,7 @@ from rclpy.node import Node
 from px4_msgs.msg import OffboardControlMode, TrajectorySetpoint, VehicleCommand, VehicleOdometry, VehicleStatus, SensorCombined
 from squeeze_custom_msgs.msg import CollisionStatus, AdmittanceTrajectoryReference
 import math
-
-#----To-do-------#
-# Figure out a way to import AdmittanceController() module in this node
-#-----------------------------------------
+import numpy as np
 
 class AdmittanceCollisionDetection(Node):
     "Node for controlling a vehicle in offboard mode using position-velocity setpoints and restarting the mission on collision"
@@ -23,8 +20,7 @@ class AdmittanceCollisionDetection(Node):
             VehicleCommand, '/fmu/vehicle_command/in', 10)
         self.collision_status_publisher = self.create_publisher(
             CollisionStatus, '/collision_status', 10)
-        #----To-do-----#
-        # add admittance_trajectory publisher
+       
         self.admittance_traj_publisher = self.create_publisher(
             AdmittanceTrajectoryReference, 'admittance_trajectory', 10)
 
@@ -41,10 +37,6 @@ class AdmittanceCollisionDetection(Node):
         #create a timer_callback to publish control commands
         self.timer = self.create_timer(0.005, self.timer_callback)
 
-        #----To-do-----#
-        # Initialise admittance controller instances for x&y direction
-        # or set a wp proportional to the peak acc_x & acc_y
-
         #------------------------
 
         #Initialize variables
@@ -59,8 +51,9 @@ class AdmittanceCollisionDetection(Node):
         self.delta_t = 0
         self.thres_delta_t = 30
         self.waypoints = self.generateWaypoints()
-        self.Acc_x = 0 
-        self.Acc_y = 0
+        self.Collision_Acc_x = 0 
+        self.Collision_Acc_y = 0
+        self.Collision_Acc_z = 0
         self.wp_num = 0
         self.thres_error = .15
         self.max_collision = 1
@@ -230,22 +223,57 @@ class AdmittanceCollisionDetection(Node):
         return None
     
     def modifyWaypoint4(self):
-        x_new = self.vehicle_odometry.x - .01*self.Acc_x 
-        y_new = self.vehicle_odometry.y + .01*self.Acc_y
-        self.waypoints[3] = [x_new, y_new, -.75, float("nan"),float("nan"),float("nan") ] # Do it using modifyWaypoint4()
+
+        # Extract the values from Q
+        q0 = self.vehicle_odometry.q[0]
+        q1 = self.vehicle_odometry.q[1]
+        q2 = self.vehicle_odometry.q[2]
+        q3 = self.vehicle_odometry.q[3]
+        
+        # First row of the rotation matrix
+        r00 = 2 * (q0 * q0 + q1 * q1) - 1
+        r01 = 2 * (q1 * q2 - q0 * q3)
+        r02 = 2 * (q1 * q3 + q0 * q2)
+        
+        # Second row of the rotation matrix
+        r10 = 2 * (q1 * q2 + q0 * q3)
+        r11 = 2 * (q0 * q0 + q2 * q2) - 1
+        r12 = 2 * (q2 * q3 - q0 * q1)
+        
+        # Third row of the rotation matrix
+        r20 = 2 * (q1 * q3 - q0 * q2)
+        r21 = 2 * (q2 * q3 + q0 * q1)
+        r22 = 2 * (q0 * q0 + q3 * q3) - 1
+        
+        # 3x3 rotation matrix from body frame to world frame
+        rot_matrix = np.array([[r00, r01, r02],
+                            [r10, r11, r12],
+                            [r20, r21, r22]])
+        
+        new_sp = np.matmul(rot_matrix, np.array([[self.Collision_Acc_x],
+                                                 [self.Collision_Acc_y],
+                                                 [self.Collision_Acc_z]]))
+        
+        x_new = self.vehicle_odometry.x + .01*new_sp[0][0]
+        y_new = self.vehicle_odometry.y + .01*new_sp[1][0]
+        z_new = self.vehicle_odometry.z + .01*new_sp[2][0]
+        self.waypoints[3] = [x_new, y_new, z_new, float("nan"),float("nan"),float("nan") ] # Do it using modifyWaypoint4()
     
     def checkCollision(self):
-        if abs(self.sensor_combined.accelerometer_m_s2[0])>self.Acc_x and self.collision_status==False: # Add collision_status = False
-            #----TO-DO-----#
-            # Separate the -ive and +ive impacts
-            self.Acc_x = abs(self.sensor_combined.accelerometer_m_s2[0])
-            self.Acc_y = self.sensor_combined.accelerometer_m_s2[1]
-        if self.Acc_x > 40.0: # Restarts only when collision count < max_collision
+
+        #construct an array of accelerometer readings
+        acc = np.array([self.sensor_combined.accelerometer_m_s2[0], self.sensor_combined.accelerometer_m_s2[1], self.sensor_combined.accelerometer_m_s2[2]])
+        max_acc = np.max(acc) 
+        min_acc = np.min(acc)
+
+        if max_acc > 40 or min_acc < -40:
+            self.Collision_Acc_x = acc[0]
+            self.Collision_Acc_y = acc[1]
+            self.Collision_Acc_z = acc[2]
+            
             self.collision_status = True
             self.collision_count += 1 
             self.get_logger().info("---------!!Collision Detected!!--------")
-        # else:
-        #     self.collision_status = False # Reset it after modifying the wp4
 
         return self.collision_status
 
