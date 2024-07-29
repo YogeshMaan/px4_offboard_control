@@ -26,6 +26,7 @@ setup(
             'collision_detection = px4_offboard_control.Collision_detection:main',
             'admittance_collision_detection = px4_offboard_control.Admittance_Collision_Detection:main',
             'waypoint_follower = px4_offboard_control.waypoint_follower:main',
+            'collision_admittance_squeeze = px4_offboard_control.collision_admittance_squeeze:main'
         ],
     },
 )
